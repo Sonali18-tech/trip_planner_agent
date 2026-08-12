@@ -21,7 +21,8 @@ class TripState(TypedDict):
     budget_status: str
     suggestions: list
     hotel_suggestions: list
-    flight_suggestions: list
+    transport_options: list
+    local_recommendations: list
 
 
 def build_graph():

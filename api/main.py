@@ -78,7 +78,8 @@ def _run_pipeline(req: TripRequest) -> dict:
         "budget_status": result.get("budget_status", ""),
         "suggestions": result.get("suggestions", []),
         "hotel_suggestions": result.get("hotel_suggestions", []),
-        "flight_suggestions": result.get("flight_suggestions", []),
+        "transport_options": result.get("transport_options", []),
+        "local_recommendations": result.get("local_recommendations", []),
     }
 
 
@@ -123,7 +124,8 @@ async def export_pdf(req: TripRequest):
         budget_breakdown=plan["budget_breakdown"],
         suggestions=plan["suggestions"],
         hotels=plan["hotel_suggestions"],
-        flights=plan["flight_suggestions"],
+        transport=plan["transport_options"],
+        local_recs=plan["local_recommendations"],
         out_path=tmp_path,
     )
     return FileResponse(tmp_path, media_type="application/pdf", filename=f"{req.destination}_trip_plan.pdf")

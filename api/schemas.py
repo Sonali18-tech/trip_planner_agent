@@ -9,6 +9,7 @@ class TripRequest(BaseModel):
     travel_style: str = "cultural"
     group_size: int = 1
     interests: list = []
+    origin: str = "a major nearby city"
 
 
 class UserSignup(BaseModel):

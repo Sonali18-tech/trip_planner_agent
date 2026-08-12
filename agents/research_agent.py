@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from tools.geocoding import get_coordinates
 from tools.weather import get_weather_forecast
+from tools.air_quality import get_air_quality
 from tools.search import tavily_search
 
 load_dotenv()
@@ -20,6 +21,17 @@ def research_node(state: dict) -> dict:
 
     coords = get_coordinates(city)
     weather = get_weather_forecast(coords["lat"], coords["lon"], days=prefs["num_days"])
+
+    try:
+        aqi_by_date = {d["date"]: d for d in get_air_quality(coords["lat"], coords["lon"], days=prefs["num_days"])}
+        for day in weather:
+            aqi_entry = aqi_by_date.get(day["date"])
+            day["aqi"] = aqi_entry["aqi"] if aqi_entry else None
+            day["aqi_category"] = aqi_entry["category"] if aqi_entry else "Unknown"
+    except Exception:
+        for day in weather:
+            day["aqi"] = None
+            day["aqi_category"] = "Unknown"  # non-critical if AQI API hiccups
 
     country_info = {}
     try:

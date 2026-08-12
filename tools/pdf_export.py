@@ -14,22 +14,27 @@ class TripPDF(FPDF):
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
 
-def _clean(text: str) -> str:
+def _clean(text) -> str:
     """fpdf2's core fonts only support latin-1 — strip anything outside that range."""
-    return text.encode("latin-1", "ignore").decode("latin-1")
+    return str(text).encode("latin-1", "ignore").decode("latin-1")
+
+
+def _section_title(pdf, text):
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 10, _clean(text), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
 
 
 def build_trip_pdf(destination: str, itinerary: list, budget_breakdown: dict,
-                    suggestions: list, hotels: list, flights: list, out_path: str) -> str:
+                    suggestions: list, hotels: list, transport: list,
+                    local_recs: list, out_path: str) -> str:
     pdf = TripPDF()
     pdf.title_text = _clean(f"Trip Plan: {destination}")
     pdf.add_page()
+    currency = budget_breakdown.get("currency", "")
 
     # Itinerary
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(0, 10, "Day-by-day itinerary", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 11)
-
+    _section_title(pdf, "Day-by-day itinerary")
     for day in itinerary:
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, _clean(f"Day {day.get('day', '?')} - {day.get('date', '')}"), new_x="LMARGIN", new_y="NEXT")
@@ -38,15 +43,18 @@ def build_trip_pdf(destination: str, itinerary: list, budget_breakdown: dict,
             pdf.multi_cell(0, 6, _clean(f"  - {act}"), new_x="LMARGIN", new_y="NEXT")
         for meal in day.get("meals", []):
             pdf.multi_cell(0, 6, _clean(f"  - {meal}"), new_x="LMARGIN", new_y="NEXT")
-        pdf.cell(0, 6, _clean(f"  Estimated cost: ${day.get('estimated_cost_usd', 0)}"), new_x="LMARGIN", new_y="NEXT")
+        cost = day.get("estimated_cost_local", day.get("estimated_cost_usd", 0))
+        pdf.cell(0, 6, _clean(f"  Estimated cost: {cost} {currency}"), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(3)
 
     # Budget
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(0, 10, "Budget breakdown", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 11)
-    pdf.cell(0, 7, _clean(f"Estimated total: {budget_breakdown.get('total_estimated')} {budget_breakdown.get('currency')}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 7, _clean(f"Your budget: {budget_breakdown.get('budget')} {budget_breakdown.get('currency')}"), new_x="LMARGIN", new_y="NEXT")
+    _section_title(pdf, "Budget breakdown")
+    pdf.cell(0, 7, _clean(f"Estimated total: {budget_breakdown.get('total_estimated')} {currency}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, _clean(f"Your budget: {budget_breakdown.get('budget')} {currency}"), new_x="LMARGIN", new_y="NEXT")
+    if budget_breakdown.get("percent_saved"):
+        pdf.cell(0, 7, _clean(f"You're {budget_breakdown['percent_saved']}% under budget"), new_x="LMARGIN", new_y="NEXT")
+    elif budget_breakdown.get("percent_over"):
+        pdf.cell(0, 7, _clean(f"You're {budget_breakdown['percent_over']}% over budget"), new_x="LMARGIN", new_y="NEXT")
     if suggestions:
         pdf.ln(2)
         pdf.set_font("Helvetica", "B", 11)
@@ -58,20 +66,35 @@ def build_trip_pdf(destination: str, itinerary: list, budget_breakdown: dict,
 
     # Hotels
     if hotels:
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.cell(0, 10, "Hotel suggestions", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 10)
+        _section_title(pdf, "Hotel suggestions")
         for h in hotels:
-            pdf.multi_cell(0, 6, _clean(f"  - {h}"), new_x="LMARGIN", new_y="NEXT")
+            if isinstance(h, dict):
+                line = f"  - {h.get('name', '')} ({h.get('area', '')}) - ~${h.get('price_range_per_night_usd', '?')}/night - {h.get('why', '')}"
+            else:
+                line = f"  - {h}"
+            pdf.multi_cell(0, 6, _clean(line), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(4)
 
-    # Flights
-    if flights:
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.cell(0, 10, "Flight suggestions", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 10)
-        for f in flights:
-            pdf.multi_cell(0, 6, _clean(f"  - {f}"), new_x="LMARGIN", new_y="NEXT")
+    # Transport
+    if transport:
+        _section_title(pdf, "How to get there")
+        for t in transport:
+            if isinstance(t, dict):
+                line = f"  - {t.get('mode', '')}: ~{t.get('typical_time', '?')}, ~${t.get('typical_cost_usd', '?')} - {t.get('tip', '')}"
+            else:
+                line = f"  - {t}"
+            pdf.multi_cell(0, 6, _clean(line), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(4)
+
+    # Local recommendations
+    if local_recs:
+        _section_title(pdf, "Local hidden gems")
+        for r in local_recs:
+            if isinstance(r, dict):
+                line = f"  - {r.get('name', '')} ({r.get('type', '')}) - {r.get('why', '')}"
+            else:
+                line = f"  - {r}"
+            pdf.multi_cell(0, 6, _clean(line), new_x="LMARGIN", new_y="NEXT")
 
     pdf.output(out_path)
     return out_path

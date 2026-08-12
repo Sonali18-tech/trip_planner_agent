@@ -3,8 +3,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.graph_objects as go
-import folium
-from streamlit_folium import st_folium
+import plotly.express as px
 
 # 👇 change this to your deployed Render URL once you deploy the backend
 API_URL = "http://localhost:8000"
@@ -56,6 +55,7 @@ with st.sidebar:
 
     st.divider()
     st.header("Trip details")
+    origin = st.text_input("Flying/traveling from", "Delhi")
     destination = st.text_input("Destination city", "Jaipur")
     num_days = st.slider("Number of days", 1, 14, 3)
     budget = st.number_input("Budget", min_value=1.0, value=15000.0)
@@ -77,6 +77,7 @@ with st.sidebar:
 
 trip_payload = {
     "destination": destination,
+    "origin": origin,
     "num_days": num_days,
     "budget": budget,
     "currency": currency,
@@ -91,10 +92,10 @@ if submit:
             if save_trip and st.session_state.token:
                 resp = requests.post(
                     f"{API_URL}/plan/save", json=trip_payload,
-                    headers={"Authorization": f"Bearer {st.session_state.token}"}, timeout=120,
+                    headers={"Authorization": f"Bearer {st.session_state.token}"}, timeout=180,
                 )
             else:
-                resp = requests.post(f"{API_URL}/plan", json=trip_payload, timeout=120)
+                resp = requests.post(f"{API_URL}/plan", json=trip_payload, timeout=180)
             resp.raise_for_status()
             st.session_state.last_plan = resp.json()
             st.session_state.last_payload = trip_payload
@@ -104,20 +105,29 @@ if submit:
 
 data = st.session_state.get("last_plan")
 
+AQI_COLORS = {
+    "Good": "🟢", "Moderate": "🟡", "Unhealthy for sensitive groups": "🟠",
+    "Unhealthy": "🔴", "Very unhealthy": "🟣", "Hazardous": "⚫", "Unknown": "⚪",
+}
+
 if data:
     st.success(f"Trip plan ready for {data['destination']}!")
 
     # --- PDF download ---
     if st.button("📄 Download as PDF"):
         with st.spinner("Generating PDF..."):
-            pdf_resp = requests.post(f"{API_URL}/plan/pdf", json=st.session_state.last_payload, timeout=120)
+            pdf_resp = requests.post(f"{API_URL}/plan/pdf", json=st.session_state.last_payload, timeout=180)
             if pdf_resp.ok:
                 st.download_button(
                     "Click to save PDF", pdf_resp.content,
                     file_name=f"{data['destination']}_trip_plan.pdf", mime="application/pdf",
                 )
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🗓️ Itinerary", "🗺️ Map", "🌦️ Weather", "💰 Budget", "🏨 Hotels & Flights"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["🗓️ Itinerary", "🗺️ Map", "🌦️ Weather & AQI", "💰 Budget", "🏨 Hotels, Transport & Local Gems"]
+    )
+
+    currency_symbol = data["budget_breakdown"].get("currency", "")
 
     # --- Itinerary ---
     with tab1:
@@ -129,40 +139,66 @@ if data:
                 st.write("**Meals:**")
                 for m in day.get("meals", []):
                     st.write(f"- {m}")
-                st.write(f"**Estimated cost:** ${day.get('estimated_cost_usd', 0)}")
+                cost = day.get("estimated_cost_local", day.get("estimated_cost_usd", 0))
+                st.write(f"**Estimated cost:** {cost} {currency_symbol}")
 
-    # --- Map + attraction photos ---
+    # --- Map ---
     with tab2:
         attractions = [a for a in data.get("attractions", []) if a.get("lat") and a.get("lon")]
         if attractions:
+            df = pd.DataFrame(attractions)
             dest_info = data.get("destination_info", {})
-            center = [dest_info.get("lat", attractions[0]["lat"]), dest_info.get("lon", attractions[0]["lon"])]
-            m = folium.Map(location=center, zoom_start=13)
-            for a in attractions:
-                popup_html = f"<b>{a['name']}</b><br>{a.get('kinds', '')}"
-                if a.get("image"):
-                    popup_html += f"<br><img src='{a['image']}' width='150'>"
-                folium.Marker([a["lat"], a["lon"]], popup=folium.Popup(popup_html, max_width=200), tooltip=a["name"]).add_to(m)
-            st_folium(m, width=None, height=500)
+            fig = px.scatter_mapbox(
+                df, lat="lat", lon="lon", hover_name="name",
+                hover_data={"kinds": True, "lat": False, "lon": False},
+                zoom=12, height=550,
+                center={"lat": dest_info.get("lat", df["lat"].mean()), "lon": dest_info.get("lon", df["lon"].mean())},
+            )
+            fig.update_traces(marker=dict(size=14, color="#e8484e"))
+            fig.update_layout(mapbox_style="open-street-map", margin={"r": 0, "t": 0, "l": 0, "b": 0})
+            st.plotly_chart(fig, use_container_width=True)
 
             st.subheader("Attraction highlights")
-            cols = st.columns(3)
-            for i, a in enumerate(attractions[:9]):
-                with cols[i % 3]:
-                    if a.get("image"):
-                        st.image(a["image"], caption=a["name"], use_container_width=True)
-                    else:
-                        st.write(f"**{a['name']}**")
+            imgs = [a for a in attractions if a.get("image")]
+            if imgs:
+                cols = st.columns(3)
+                for i, a in enumerate(imgs[:9]):
+                    with cols[i % 3]:
+                        st.image(a["image"], caption=a["name"])
+            else:
+                st.caption("No preview photos available from the attractions API for this destination.")
         else:
             st.info("No mapped attractions returned for this destination.")
 
-    # --- Weather ---
+    # --- Weather + AQI ---
     with tab3:
         weather_df = pd.DataFrame(data["weather_summary"])
         if not weather_df.empty:
+            st.subheader("Daily overview")
+            cols = st.columns(len(weather_df))
+            for i, row in weather_df.iterrows():
+                with cols[i]:
+                    icon = row.get("icon", "")
+                    st.markdown(f"**{row['date']}**")
+                    st.markdown(f"### {icon} {row.get('condition', '')}")
+                    st.metric("Max / Min temp", f"{row['max_temp']}° / {row['min_temp']}°")
+                    if row.get("feels_like_max") is not None:
+                        st.caption(f"Feels like {row['feels_like_max']}° / {row['feels_like_min']}°")
+                    st.write(f"🌧️ Rain: {row['rain_mm']} mm" + (f" ({row['rain_chance_pct']}% chance)" if row.get("rain_chance_pct") is not None else ""))
+                    if row.get("humidity_pct") is not None:
+                        st.write(f"💧 Humidity: {row['humidity_pct']}%")
+                    if row.get("wind_kmh") is not None:
+                        st.write(f"💨 Wind: {row['wind_kmh']} km/h")
+                    aqi = row.get("aqi")
+                    if aqi is not None:
+                        cat = row.get("aqi_category", "Unknown")
+                        st.write(f"{AQI_COLORS.get(cat, '⚪')} AQI: {aqi} ({cat})")
+
+            st.divider()
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=weather_df["date"], y=weather_df["max_temp"], name="Max temp"))
-            fig.add_trace(go.Scatter(x=weather_df["date"], y=weather_df["min_temp"], name="Min temp"))
+            fig.add_trace(go.Scatter(x=weather_df["date"], y=weather_df["max_temp"], name="Max temp", mode="lines+markers"))
+            fig.add_trace(go.Scatter(x=weather_df["date"], y=weather_df["min_temp"], name="Min temp", mode="lines+markers"))
+            fig.update_layout(title="Temperature trend", yaxis_title="°C")
             st.plotly_chart(fig, use_container_width=True)
 
     # --- Budget ---
@@ -171,18 +207,54 @@ if data:
         col1, col2, col3 = st.columns(3)
         col1.metric("Estimated total", f"{bb.get('total_estimated', 0)} {bb.get('currency', '')}")
         col2.metric("Your budget", f"{bb.get('budget', 0)} {bb.get('currency', '')}")
-        col3.metric("Status", data["budget_status"].upper())
+        if data["budget_status"] == "within":
+            col3.metric("Status", "WITHIN BUDGET", delta=f"{bb.get('percent_saved', 0)}% saved")
+        else:
+            col3.metric("Status", "OVER BUDGET", delta=f"{bb.get('percent_over', 0)}% over", delta_color="inverse")
+        st.progress(min(bb.get("percent_of_budget", 0) / 100, 1.0), text=f"{bb.get('percent_of_budget', 0)}% of budget used")
+
         if data["budget_status"] == "over" and data["suggestions"]:
             st.warning("Over budget — here are some suggested swaps:")
             for s in data["suggestions"]:
                 st.write(f"- {s}")
 
-    # --- Hotels & Flights ---
+    # --- Hotels, Transport, Local gems ---
     with tab5:
         st.subheader("🏨 Hotel suggestions")
-        for h in data.get("hotel_suggestions", []):
-            st.write(f"- {h}")
-        st.subheader("✈️ Flight tips")
-        for f in data.get("flight_suggestions", []):
-            st.write(f"- {f}")
-        st.caption("These are AI-summarized search results, not live prices — verify on a booking site before purchasing.")
+        hotels = data.get("hotel_suggestions", [])
+        if hotels and isinstance(hotels[0], dict):
+            for h in hotels:
+                with st.container(border=True):
+                    st.markdown(f"**{h.get('name', '')}** — {h.get('area', '')}")
+                    st.write(f"💵 ~${h.get('price_range_per_night_usd', '?')}/night · {h.get('why', '')}")
+        else:
+            for h in hotels:
+                st.write(f"- {h}")
+
+        st.subheader("🚗 How to get there")
+        transport = data.get("transport_options", [])
+        if transport and isinstance(transport[0], dict):
+            cols = st.columns(len(transport)) if len(transport) <= 4 else st.columns(4)
+            for i, t in enumerate(transport):
+                with cols[i % len(cols)]:
+                    with st.container(border=True):
+                        st.markdown(f"**{t.get('mode', '')}**")
+                        st.write(f"⏱️ {t.get('typical_time', '?')}")
+                        st.write(f"💵 ~${t.get('typical_cost_usd', '?')}")
+                        st.caption(t.get("tip", ""))
+        else:
+            for t in transport:
+                st.write(f"- {t}")
+
+        st.subheader("💎 Local hidden gems")
+        local_recs = data.get("local_recommendations", [])
+        if local_recs and isinstance(local_recs[0], dict):
+            for r in local_recs:
+                with st.container(border=True):
+                    st.markdown(f"**{r.get('name', '')}** · _{r.get('type', '')}_")
+                    st.write(r.get("why", ""))
+        else:
+            for r in local_recs:
+                st.write(f"- {r}")
+
+        st.caption("Hotel/transport/local info is AI-summarized from web search, not live prices — verify before booking.")
