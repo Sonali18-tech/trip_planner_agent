@@ -64,7 +64,9 @@ async def me(current_user: dict = Depends(get_current_user)):
 
 def _run_pipeline(req: TripRequest) -> dict:
     try:
-        result = trip_graph.invoke({"preferences": req.model_dump()})
+        # mode="json" serializes the date field to a string so it's safe to
+        # pass through json.dumps() inside the agent prompts downstream.
+        result = trip_graph.invoke({"preferences": req.model_dump(mode="json")})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -72,6 +74,7 @@ def _run_pipeline(req: TripRequest) -> dict:
         "destination": req.destination,
         "destination_info": result.get("destination_info", {}),
         "weather_summary": result.get("weather_forecast", []),
+        "weather_forecast_available": result.get("weather_forecast_available", True),
         "attractions": result.get("attractions", []),
         "itinerary": result.get("final_itinerary", []),
         "budget_breakdown": result.get("budget_breakdown", {}),

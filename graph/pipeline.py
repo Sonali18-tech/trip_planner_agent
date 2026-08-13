@@ -14,6 +14,7 @@ class TripState(TypedDict):
     preferences: dict
     destination_info: dict
     weather_forecast: list
+    weather_forecast_available: bool
     attractions: list
     raw_itinerary: list
     final_itinerary: list
@@ -23,6 +24,7 @@ class TripState(TypedDict):
     hotel_suggestions: list
     transport_options: list
     local_recommendations: list
+    logistics_currency: str
 
 
 def build_graph():

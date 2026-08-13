@@ -25,6 +25,14 @@ def _section_title(pdf, text):
     pdf.set_font("Helvetica", "", 10)
 
 
+def _money_field(d: dict, base_key: str, currency: str) -> str:
+    for key in (f"{base_key}_{currency.lower()}", f"{base_key}_usd"):
+        if key in d:
+            symbol = currency if key.endswith(currency.lower()) else "USD"
+            return f"{d[key]} {symbol}"
+    return "n/a"
+
+
 def build_trip_pdf(destination: str, itinerary: list, budget_breakdown: dict,
                     suggestions: list, hotels: list, transport: list,
                     local_recs: list, out_path: str) -> str:
@@ -69,7 +77,8 @@ def build_trip_pdf(destination: str, itinerary: list, budget_breakdown: dict,
         _section_title(pdf, "Hotel suggestions")
         for h in hotels:
             if isinstance(h, dict):
-                line = f"  - {h.get('name', '')} ({h.get('area', '')}) - ~${h.get('price_range_per_night_usd', '?')}/night - {h.get('why', '')}"
+                price = _money_field(h, "price_range_per_night", currency)
+                line = f"  - {h.get('name', '')} ({h.get('area', '')}) - ~{price}/night - {h.get('why', '')}"
             else:
                 line = f"  - {h}"
             pdf.multi_cell(0, 6, _clean(line), new_x="LMARGIN", new_y="NEXT")
@@ -80,7 +89,8 @@ def build_trip_pdf(destination: str, itinerary: list, budget_breakdown: dict,
         _section_title(pdf, "How to get there")
         for t in transport:
             if isinstance(t, dict):
-                line = f"  - {t.get('mode', '')}: ~{t.get('typical_time', '?')}, ~${t.get('typical_cost_usd', '?')} - {t.get('tip', '')}"
+                cost = _money_field(t, "typical_cost", currency)
+                line = f"  - {t.get('mode', '')}: ~{t.get('typical_time', '?')}, ~{cost} - {t.get('tip', '')}"
             else:
                 line = f"  - {t}"
             pdf.multi_cell(0, 6, _clean(line), new_x="LMARGIN", new_y="NEXT")
@@ -91,7 +101,8 @@ def build_trip_pdf(destination: str, itinerary: list, budget_breakdown: dict,
         _section_title(pdf, "Local hidden gems")
         for r in local_recs:
             if isinstance(r, dict):
-                line = f"  - {r.get('name', '')} ({r.get('type', '')}) - {r.get('why', '')}"
+                loc = f" [{r.get('location', '')}]" if r.get("location") else ""
+                line = f"  - {r.get('name', '')} ({r.get('type', '')}){loc} - {r.get('why', '')}"
             else:
                 line = f"  - {r}"
             pdf.multi_cell(0, 6, _clean(line), new_x="LMARGIN", new_y="NEXT")

@@ -17,8 +17,24 @@ def _describe(code: int) -> tuple:
     return WEATHER_CODE_MAP.get(code, ("Unknown", "❓"))
 
 
-def get_weather_forecast(lat: float, lon: float, days: int = 7) -> list:
-    """Return a list of daily weather dicts for the given coordinates."""
+def get_weather_forecast(lat: float, lon: float, days: int = 7, start_date: str = None) -> dict:
+    """Return {'forecast': [...], 'forecast_available': bool}.
+
+    Open-Meteo only forecasts ~16 days ahead. If start_date falls further out,
+    we can't get real numbers for those exact days, so we say so instead of
+    silently showing today's weather mislabeled as the trip dates.
+    """
+    from datetime import date, timedelta
+
+    forecast_available = True
+    if start_date:
+        try:
+            trip_start = date.fromisoformat(start_date)
+            if (trip_start - date.today()).days > 15:
+                forecast_available = False
+        except ValueError:
+            pass
+
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
@@ -28,9 +44,16 @@ def get_weather_forecast(lat: float, lon: float, days: int = 7) -> list:
             "apparent_temperature_min,precipitation_sum,precipitation_probability_max,"
             "windspeed_10m_max,relative_humidity_2m_max,weathercode"
         ),
-        "forecast_days": days,
         "timezone": "auto",
     }
+    if forecast_available and start_date:
+        trip_start = date.fromisoformat(start_date)
+        trip_end = trip_start + timedelta(days=days - 1)
+        params["start_date"] = trip_start.isoformat()
+        params["end_date"] = trip_end.isoformat()
+    else:
+        params["forecast_days"] = days
+
     r = requests.get(url, params=params, timeout=15)
     r.raise_for_status()
     data = r.json()["daily"]
@@ -55,11 +78,11 @@ def get_weather_forecast(lat: float, lon: float, days: int = 7) -> list:
                 "rainy": data["precipitation_sum"][i] > 5,
             }
         )
-    return results
+    return {"forecast": results, "forecast_available": forecast_available}
 
 
 if __name__ == "__main__":
     # Quick manual test: python tools/weather.py
-    forecast = get_weather_forecast(28.6139, 77.2090, days=3)  # Delhi
-    for day in forecast:
+    result = get_weather_forecast(28.6139, 77.2090, days=3)  # Delhi
+    for day in result["forecast"]:
         print(day)

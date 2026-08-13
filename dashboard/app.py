@@ -1,4 +1,5 @@
 """Streamlit dashboard — talks to the FastAPI backend."""
+import datetime
 import streamlit as st
 import requests
 import pandas as pd
@@ -57,7 +58,23 @@ with st.sidebar:
     st.header("Trip details")
     origin = st.text_input("Flying/traveling from", "Delhi")
     destination = st.text_input("Destination city", "Jaipur")
-    num_days = st.slider("Number of days", 1, 14, 3)
+
+    date_range = st.date_input(
+        "Trip dates",
+        value=(datetime.date.today() + datetime.timedelta(days=7),
+               datetime.date.today() + datetime.timedelta(days=10)),
+        min_value=datetime.date.today(),
+    )
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
+        num_days = (end_date - start_date).days + 1
+    else:
+        # user has only picked the start date so far
+        start_date = date_range if isinstance(date_range, datetime.date) else datetime.date.today()
+        num_days = 3
+    num_days = max(1, min(num_days, 14))
+    st.caption(f"{num_days} day{'s' if num_days != 1 else ''}" + (" — pick an end date too" if not isinstance(date_range, tuple) else ""))
+
     budget = st.number_input("Budget", min_value=1.0, value=15000.0)
     currency = st.selectbox("Currency", ["INR", "USD", "EUR", "GBP"])
     travel_style = st.selectbox("Travel style", ["cultural", "adventure", "relaxed", "luxury", "budget"])
@@ -79,6 +96,7 @@ trip_payload = {
     "destination": destination,
     "origin": origin,
     "num_days": num_days,
+    "start_date": start_date.isoformat(),
     "budget": budget,
     "currency": currency,
     "travel_style": travel_style,
@@ -110,8 +128,22 @@ AQI_COLORS = {
     "Unhealthy": "🔴", "Very unhealthy": "🟣", "Hazardous": "⚫", "Unknown": "⚪",
 }
 
+
+def _money_field(d: dict, base_key: str, currency: str) -> str:
+    """Look for a currency-specific field first (e.g. price_range_per_night_inr),
+    falling back to the USD field, falling back to a raw dump of the dict."""
+    for key in (f"{base_key}_{currency.lower()}", f"{base_key}_usd"):
+        if key in d:
+            symbol = currency if key.endswith(currency.lower()) else "USD"
+            return f"{d[key]} {symbol}"
+    return "—"
+
+
 if data:
     st.success(f"Trip plan ready for {data['destination']}!")
+
+    if not data.get("weather_forecast_available", True):
+        st.info("Your trip dates are more than ~15 days out, so exact weather/AQI for those days isn't available yet — showing general seasonal data instead.")
 
     # --- PDF download ---
     if st.button("📄 Download as PDF"):
@@ -128,6 +160,7 @@ if data:
     )
 
     currency_symbol = data["budget_breakdown"].get("currency", "")
+    trip_currency = st.session_state.last_payload.get("currency", "INR")
 
     # --- Itinerary ---
     with tab1:
@@ -135,7 +168,10 @@ if data:
             with st.expander(f"Day {day.get('day', '?')} — {day.get('date', '')}", expanded=True):
                 st.write("**Activities:**")
                 for a in day.get("activities", []):
-                    st.write(f"- {a}")
+                    if a.strip().startswith("⭐"):
+                        st.markdown(f"- {a}")
+                    else:
+                        st.write(f"- {a}")
                 st.write("**Meals:**")
                 for m in day.get("meals", []):
                     st.write(f"- {m}")
@@ -226,7 +262,8 @@ if data:
             for h in hotels:
                 with st.container(border=True):
                     st.markdown(f"**{h.get('name', '')}** — {h.get('area', '')}")
-                    st.write(f"💵 ~${h.get('price_range_per_night_usd', '?')}/night · {h.get('why', '')}")
+                    price = _money_field(h, "price_range_per_night", trip_currency)
+                    st.write(f"💵 ~{price}/night · {h.get('why', '')}")
         else:
             for h in hotels:
                 st.write(f"- {h}")
@@ -240,7 +277,7 @@ if data:
                     with st.container(border=True):
                         st.markdown(f"**{t.get('mode', '')}**")
                         st.write(f"⏱️ {t.get('typical_time', '?')}")
-                        st.write(f"💵 ~${t.get('typical_cost_usd', '?')}")
+                        st.write(f"💵 ~{_money_field(t, 'typical_cost', trip_currency)}")
                         st.caption(t.get("tip", ""))
         else:
             for t in transport:
@@ -249,10 +286,14 @@ if data:
         st.subheader("💎 Local hidden gems")
         local_recs = data.get("local_recommendations", [])
         if local_recs and isinstance(local_recs[0], dict):
-            for r in local_recs:
-                with st.container(border=True):
-                    st.markdown(f"**{r.get('name', '')}** · _{r.get('type', '')}_")
-                    st.write(r.get("why", ""))
+            cols = st.columns(2)
+            for i, r in enumerate(local_recs):
+                with cols[i % 2]:
+                    with st.container(border=True):
+                        st.markdown(f"**{r.get('name', '')}** · _{r.get('type', '')}_")
+                        if r.get("location"):
+                            st.caption(f"📍 {r['location']}")
+                        st.write(r.get("why", ""))
         else:
             for r in local_recs:
                 st.write(f"- {r}")

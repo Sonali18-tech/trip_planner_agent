@@ -20,7 +20,13 @@ def research_node(state: dict) -> dict:
     city = prefs["destination"]
 
     coords = get_coordinates(city)
-    weather = get_weather_forecast(coords["lat"], coords["lon"], days=prefs["num_days"])
+    start_date = prefs.get("start_date")
+    weather_result = get_weather_forecast(
+        coords["lat"], coords["lon"], days=prefs["num_days"],
+        start_date=str(start_date) if start_date else None,
+    )
+    weather = weather_result["forecast"]
+    forecast_available = weather_result["forecast_available"]
 
     try:
         aqi_by_date = {d["date"]: d for d in get_air_quality(coords["lat"], coords["lon"], days=prefs["num_days"])}
@@ -50,4 +56,5 @@ def research_node(state: dict) -> dict:
         **state,
         "destination_info": {**coords, "country": country_info, "search_tips": search_tips},
         "weather_forecast": weather,
+        "weather_forecast_available": forecast_available,
     }
