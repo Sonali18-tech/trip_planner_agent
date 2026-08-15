@@ -23,6 +23,7 @@ def budget_node(state: dict) -> dict:
     itinerary = state["raw_itinerary"]
     budget = state["preferences"]["budget"]
     currency = state["preferences"]["currency"]
+    group_size = state["preferences"].get("group_size", 1) or 1
 
     rate = 1.0 if currency == "USD" else get_exchange_rate("USD", currency)
 
@@ -69,6 +70,9 @@ no markdown fences, no explanation."""
             "percent_of_budget": pct_of_budget,
             "percent_saved": pct_saved_or_over if not over else 0,
             "percent_over": pct_saved_or_over if over else 0,
+            "group_size": group_size,
+            "per_person_cost": round(total / group_size, 2),
+            "per_person_budget": round(budget / group_size, 2),
         },
         "budget_status": "over" if over else "within",
         "suggestions": suggestions,

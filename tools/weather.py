@@ -1,4 +1,5 @@
 """Open-Meteo wrapper — free, no signup, no API key needed."""
+from datetime import date, timedelta
 import requests
 
 # WMO weather codes -> short human label + emoji
@@ -12,52 +13,24 @@ WEATHER_CODE_MAP = {
     95: ("Thunderstorm", "⛈️"), 96: ("Thunderstorm w/ hail", "⛈️"), 99: ("Severe thunderstorm", "⛈️"),
 }
 
+DAILY_FIELDS = (
+    "temperature_2m_max,temperature_2m_min,apparent_temperature_max,"
+    "apparent_temperature_min,precipitation_sum,precipitation_probability_max,"
+    "windspeed_10m_max,relative_humidity_2m_max,weathercode"
+)
+
 
 def _describe(code: int) -> tuple:
     return WEATHER_CODE_MAP.get(code, ("Unknown", "❓"))
 
 
-def get_weather_forecast(lat: float, lon: float, days: int = 7, start_date: str = None) -> dict:
-    """Return {'forecast': [...], 'forecast_available': bool}.
-
-    Open-Meteo only forecasts ~16 days ahead. If start_date falls further out,
-    we can't get real numbers for those exact days, so we say so instead of
-    silently showing today's weather mislabeled as the trip dates.
-    """
-    from datetime import date, timedelta
-
-    forecast_available = True
-    if start_date:
-        try:
-            trip_start = date.fromisoformat(start_date)
-            if (trip_start - date.today()).days > 15:
-                forecast_available = False
-        except ValueError:
-            pass
-
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "daily": (
-            "temperature_2m_max,temperature_2m_min,apparent_temperature_max,"
-            "apparent_temperature_min,precipitation_sum,precipitation_probability_max,"
-            "windspeed_10m_max,relative_humidity_2m_max,weathercode"
-        ),
-        "timezone": "auto",
-    }
-    if forecast_available and start_date:
-        trip_start = date.fromisoformat(start_date)
-        trip_end = trip_start + timedelta(days=days - 1)
-        params["start_date"] = trip_start.isoformat()
-        params["end_date"] = trip_end.isoformat()
-    else:
-        params["forecast_days"] = days
-
-    r = requests.get(url, params=params, timeout=15)
+def _fetch(params: dict) -> dict:
+    r = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=15)
     r.raise_for_status()
-    data = r.json()["daily"]
+    return r.json()["daily"]
 
+
+def _parse(data: dict, days: int) -> list:
     results = []
     for i in range(len(data["time"])):
         code = data["weathercode"][i]
@@ -78,7 +51,41 @@ def get_weather_forecast(lat: float, lon: float, days: int = 7, start_date: str 
                 "rainy": data["precipitation_sum"][i] > 5,
             }
         )
-    return {"forecast": results, "forecast_available": forecast_available}
+    return results
+
+
+def get_weather_forecast(lat: float, lon: float, days: int = 7, start_date: str = None) -> dict:
+    """Return {'forecast': [...], 'forecast_available': bool}.
+
+    Tries to fetch weather for the exact trip dates first. If that request
+    fails for any reason (Open-Meteo rejects the date range, dates too far
+    out, transient error, etc.) it falls back to a plain N-day forecast
+    starting today rather than crashing the whole trip-planning pipeline.
+    """
+    base_params = {"latitude": lat, "longitude": lon, "daily": DAILY_FIELDS, "timezone": "auto"}
+
+    forecast_available = True
+    if start_date:
+        try:
+            trip_start = date.fromisoformat(start_date)
+            if (trip_start - date.today()).days > 15:
+                forecast_available = False
+        except ValueError:
+            start_date = None
+
+    if forecast_available and start_date:
+        trip_start = date.fromisoformat(start_date)
+        trip_end = trip_start + timedelta(days=days - 1)
+        try:
+            data = _fetch({**base_params, "start_date": trip_start.isoformat(), "end_date": trip_end.isoformat()})
+            return {"forecast": _parse(data, days), "forecast_available": True}
+        except requests.exceptions.HTTPError:
+            # Open-Meteo rejected the date-range request (e.g. dates outside
+            # what it'll serve right now) — fall back below instead of failing.
+            forecast_available = False
+
+    data = _fetch({**base_params, "forecast_days": days})
+    return {"forecast": _parse(data, days), "forecast_available": forecast_available}
 
 
 if __name__ == "__main__":

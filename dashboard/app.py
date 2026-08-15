@@ -16,11 +16,73 @@ if "token" not in st.session_state:
 if "email" not in st.session_state:
     st.session_state.email = None
 
+# Defaults for form fields — a parsed "trip idea" or a destination quick-pick
+# overwrites these in session_state *before* the widgets below are created,
+# which is how Streamlit lets you programmatically pre-fill a widget.
+FORM_DEFAULTS = {
+    "destination": "Jaipur", "origin": "Delhi", "budget": 15000.0, "currency": "INR",
+    "travel_style": "cultural", "group_size": 1, "interests": [],
+}
+for k, v in FORM_DEFAULTS.items():
+    st.session_state.setdefault(k, v)
+
 st.title("🧳 AI Trip Planner")
 st.caption("6-agent AI system · Llama 3.3 70B (Groq) · free APIs only")
 
+POPULAR_DESTINATIONS = {
+    "India": ["Goa", "Manali", "Jaipur", "Kerala", "Ladakh", "Andaman"],
+    "International (for Indian travelers)": ["Bali", "Bangkok", "Singapore", "Dubai", "Maldives", "Vietnam"],
+}
 
-# ---------- Sidebar: auth ----------
+# ---------- Quick trip-idea box ----------
+st.subheader("✨ Or just describe your trip")
+idea_col1, idea_col2 = st.columns([5, 1])
+with idea_col1:
+    trip_idea = st.text_input(
+        "Type a trip idea", placeholder="e.g. 5 day trip to Goa in December for 2 people, ₹30k budget, love beaches and nightlife",
+        label_visibility="collapsed",
+    )
+with idea_col2:
+    parse_clicked = st.button("Generate", use_container_width=True)
+
+if parse_clicked and trip_idea.strip():
+    with st.spinner("Reading your trip idea..."):
+        try:
+            r = requests.post(f"{API_URL}/plan/parse-idea", json={"text": trip_idea}, timeout=60)
+            r.raise_for_status()
+            parsed = r.json()
+        except Exception as e:
+            st.error(f"Could not parse that: {e}")
+            parsed = {}
+
+    if parsed.get("destination"):
+        st.session_state["destination"] = parsed["destination"]
+    if parsed.get("origin"):
+        st.session_state["origin"] = parsed["origin"]
+    if parsed.get("budget"):
+        st.session_state["budget"] = float(parsed["budget"])
+    if parsed.get("currency"):
+        st.session_state["currency"] = parsed["currency"]
+    if parsed.get("travel_style"):
+        st.session_state["travel_style"] = parsed["travel_style"]
+    if parsed.get("group_size"):
+        st.session_state["group_size"] = int(parsed["group_size"])
+    if parsed.get("interests"):
+        st.session_state["interests"] = parsed["interests"]
+    if parsed.get("start_date"):
+        try:
+            sd = datetime.date.fromisoformat(parsed["start_date"])
+            days = parsed.get("num_days") or 3
+            st.session_state["trip_dates"] = (sd, sd + datetime.timedelta(days=days - 1))
+        except ValueError:
+            pass
+    st.success("Filled in the form below from your trip idea — review and adjust before planning.")
+    st.rerun()
+
+st.divider()
+
+
+# ---------- Sidebar: auth + trip form ----------
 with st.sidebar:
     st.header("Account")
     if st.session_state.token:
@@ -55,31 +117,40 @@ with st.sidebar:
                     st.error(r.json().get("detail", "Signup failed"))
 
     st.divider()
-    st.header("Trip details")
-    origin = st.text_input("Flying/traveling from", "Delhi")
-    destination = st.text_input("Destination city", "Jaipur")
+    st.header("Popular destinations")
+    for region, cities in POPULAR_DESTINATIONS.items():
+        st.caption(region)
+        pick_cols = st.columns(3)
+        for i, city in enumerate(cities):
+            with pick_cols[i % 3]:
+                if st.button(city, key=f"pick_{city}", use_container_width=True):
+                    st.session_state["destination"] = city
+                    st.rerun()
 
-    date_range = st.date_input(
-        "Trip dates",
-        value=(datetime.date.today() + datetime.timedelta(days=7),
-               datetime.date.today() + datetime.timedelta(days=10)),
-        min_value=datetime.date.today(),
+    st.divider()
+    st.header("Trip details")
+    origin = st.text_input("Flying/traveling from", key="origin")
+    destination = st.text_input("Destination city", key="destination")
+
+    default_dates = st.session_state.get(
+        "trip_dates",
+        (datetime.date.today() + datetime.timedelta(days=7), datetime.date.today() + datetime.timedelta(days=10)),
     )
+    date_range = st.date_input("Trip dates", value=default_dates, min_value=datetime.date.today())
     if isinstance(date_range, tuple) and len(date_range) == 2:
         start_date, end_date = date_range
         num_days = (end_date - start_date).days + 1
     else:
-        # user has only picked the start date so far
         start_date = date_range if isinstance(date_range, datetime.date) else datetime.date.today()
         num_days = 3
     num_days = max(1, min(num_days, 14))
     st.caption(f"{num_days} day{'s' if num_days != 1 else ''}" + (" — pick an end date too" if not isinstance(date_range, tuple) else ""))
 
-    budget = st.number_input("Budget", min_value=1.0, value=15000.0)
-    currency = st.selectbox("Currency", ["INR", "USD", "EUR", "GBP"])
-    travel_style = st.selectbox("Travel style", ["cultural", "adventure", "relaxed", "luxury", "budget"])
-    group_size = st.number_input("Group size", min_value=1, value=1)
-    interests = st.multiselect("Interests", ["museums", "food", "nature", "nightlife", "shopping", "history"])
+    budget = st.number_input("Budget", min_value=1.0, key="budget")
+    currency = st.selectbox("Currency", ["INR", "USD", "EUR", "GBP"], key="currency")
+    travel_style = st.selectbox("Travel style", ["cultural", "adventure", "relaxed", "luxury", "budget"], key="travel_style")
+    group_size = st.number_input("Group size", min_value=1, key="group_size")
+    interests = st.multiselect("Interests", ["museums", "food", "nature", "nightlife", "shopping", "history"], key="interests")
     save_trip = st.checkbox("Save this trip to my account", value=bool(st.session_state.token), disabled=not st.session_state.token)
     submit = st.button("Plan my trip", type="primary", use_container_width=True)
 
@@ -248,6 +319,26 @@ if data:
         else:
             col3.metric("Status", "OVER BUDGET", delta=f"{bb.get('percent_over', 0)}% over", delta_color="inverse")
         st.progress(min(bb.get("percent_of_budget", 0) / 100, 1.0), text=f"{bb.get('percent_of_budget', 0)}% of budget used")
+
+        if bb.get("group_size", 1) > 1:
+            st.divider()
+            st.subheader("👥 Split between the group")
+            split_col1, split_col2, split_col3 = st.columns(3)
+            split_col1.metric("Group size", bb.get("group_size", 1))
+            split_col2.metric("Cost per person", f"{bb.get('per_person_cost', 0)} {bb.get('currency', '')}")
+            split_col3.metric("Budget per person", f"{bb.get('per_person_budget', 0)} {bb.get('currency', '')}")
+
+        budget_categories = data.get("budget_categories", [])
+        if budget_categories:
+            st.divider()
+            st.subheader("📊 Where the money goes")
+            cat_df = pd.DataFrame(budget_categories)
+            pie = go.Figure(data=[go.Pie(
+                labels=cat_df["category"], values=cat_df["amount"], hole=0.4,
+                textinfo="label+percent",
+            )])
+            pie.update_layout(margin={"t": 10, "b": 10, "l": 10, "r": 10}, height=400)
+            st.plotly_chart(pie, use_container_width=True)
 
         if data["budget_status"] == "over" and data["suggestions"]:
             st.warning("Over budget — here are some suggested swaps:")

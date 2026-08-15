@@ -4,6 +4,7 @@ import tempfile
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from graph.pipeline import trip_graph
@@ -13,6 +14,7 @@ from api.database import (
     save_trip, get_user_trips, get_trip_by_id,
 )
 from api.auth import hash_password, verify_password, create_access_token, get_current_user
+from agents.trip_idea_parser import parse_trip_idea
 from tools.pdf_export import build_trip_pdf
 
 load_dotenv()
@@ -62,6 +64,19 @@ async def me(current_user: dict = Depends(get_current_user)):
 
 # ---------- Trip planning ----------
 
+class TripIdeaRequest(BaseModel):
+    text: str
+
+
+@app.post("/plan/parse-idea")
+async def parse_idea(body: TripIdeaRequest):
+    """Turn a free-text trip idea into structured fields to pre-fill the form."""
+    try:
+        return parse_trip_idea(body.text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def _run_pipeline(req: TripRequest) -> dict:
     try:
         # mode="json" serializes the date field to a string so it's safe to
@@ -83,6 +98,7 @@ def _run_pipeline(req: TripRequest) -> dict:
         "hotel_suggestions": result.get("hotel_suggestions", []),
         "transport_options": result.get("transport_options", []),
         "local_recommendations": result.get("local_recommendations", []),
+        "budget_categories": result.get("budget_categories", []),
     }
 
 

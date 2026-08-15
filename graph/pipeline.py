@@ -25,6 +25,7 @@ class TripState(TypedDict):
     transport_options: list
     local_recommendations: list
     logistics_currency: str
+    budget_categories: list
 
 
 def build_graph():

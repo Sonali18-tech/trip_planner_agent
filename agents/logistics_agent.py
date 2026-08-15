@@ -114,10 +114,43 @@ Return ONLY a JSON list of objects, no markdown fences, exact shape:
 "location": "neighborhood or street name", "why": "vivid one-line reason it's worth seeking out"}}]"""
         local_recommendations = _ask_llm_json(prompt, [])
 
+    # ---- Budget category breakdown (for the pie chart) ----
+    total = state.get("budget_breakdown", {}).get("total_estimated", 0)
+    budget_categories = []
+    if total:
+        prompt = f"""A trip to {destination} has an estimated total cost of
+{total} {currency}, based on this context:
+
+Itinerary: {json.dumps(state.get('final_itinerary', []))}
+Hotel options considered: {json.dumps(hotels)}
+Transport options considered: {json.dumps(transport_options)}
+
+Split that {total} {currency} total across these categories: Accommodation,
+Food & Dining, Local Transport, Activities & Sightseeing, Shopping & Misc.
+The amounts MUST sum to exactly {total}. Return ONLY a JSON list, no markdown
+fences, exact shape:
+[{{"category": "Accommodation", "amount": 1234.0}}, ...]"""
+        raw_categories = _ask_llm_json(prompt, [])
+        # normalize defensively — an LLM's numbers won't always sum exactly,
+        # and a broken/empty response should never crash the whole pipeline.
+        try:
+            raw_sum = sum(float(c["amount"]) for c in raw_categories)
+            if raw_sum > 0:
+                for c in raw_categories:
+                    amt = float(c["amount"]) / raw_sum * total
+                    budget_categories.append({
+                        "category": c["category"],
+                        "amount": round(amt, 2),
+                        "percent": round(amt / total * 100, 1),
+                    })
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            budget_categories = []
+
     return {
         **state,
         "hotel_suggestions": hotels,
         "transport_options": transport_options,
         "local_recommendations": local_recommendations,
         "logistics_currency": currency if rate else "USD",
+        "budget_categories": budget_categories,
     }
