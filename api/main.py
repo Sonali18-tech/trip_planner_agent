@@ -36,7 +36,7 @@ def on_startup():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": "llama-3.3-70b-versatile"}
+    return {"status": "ok", "model": "openai/gpt-oss-120b"}
 
 
 # ---------- Auth ----------

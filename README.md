@@ -1,7 +1,7 @@
 # AI Trip Planner Agent
 
 A 5-agent LangGraph system that plans a trip end-to-end using only free APIs
-and a free LLM (Llama 3.3 70B via Groq).
+and a free LLM (GPT-OSS 120B via Groq).
 
 ## Agents
 1. **Intake** — normalizes user preferences

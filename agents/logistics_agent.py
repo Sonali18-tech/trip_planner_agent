@@ -6,38 +6,19 @@ LLM structure it into clean cards, priced directly in the user's chosen
 currency (via a live USD exchange rate). Treat costs/times as ballpark
 estimates to verify on a real booking site — not live prices.
 """
-import os
 import json
-from langchain_groq import ChatGroq
-from dotenv import load_dotenv
-
 from tools.search import tavily_search
 from tools.currency import get_exchange_rate
+from tools.llm_helpers import make_llm, ask_llm_json
 
-load_dotenv()
-
-llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0.2,
-)
+llm = make_llm(temperature=0.2)
 
 
-def _search_safe(query: str, max_results: int = 5) -> list:
+def _search_safe(query: str, max_results: int = 3) -> list:
     try:
         return tavily_search(query, max_results=max_results)
     except Exception:
         return []
-
-
-def _ask_llm_json(prompt: str, fallback: list) -> list:
-    r = llm.invoke(prompt)
-    raw = r.content.strip().strip("`")
-    raw = raw[4:] if raw.startswith("json") else raw
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return fallback
 
 
 def travel_logistics_node(state: dict) -> dict:
@@ -74,7 +55,7 @@ List 3-5 real accommodation names or areas mentioned. {currency_instruction}
 Return ONLY a JSON list of objects, no markdown fences, exact shape:
 [{{"name": "Hotel/area name", "area": "neighborhood if known, else destination name",
 "{price_field}": "e.g. 3000-6000", "why": "one-line reason to pick it"}}]"""
-        hotels = _ask_llm_json(prompt, [])
+        hotels = ask_llm_json(llm, prompt, fallback=[]) or []
 
     # ---- Transport: multiple modes, each with time + cost + a tip ----
     transport_results = _search_safe(
@@ -91,7 +72,7 @@ and car/taxi where relevant — skip a mode if genuinely not viable for this rou
 Return ONLY a JSON list of objects, no markdown fences, exact shape:
 [{{"mode": "Flight", "typical_time": "e.g. 2h 30m", "{cost_field}": "e.g. 5000-9000",
 "tip": "one practical booking tip for this mode"}}]"""
-        transport_options = _ask_llm_json(prompt, [])
+        transport_options = ask_llm_json(llm, prompt, fallback=[]) or []
 
     # ---- Local hidden gems: cafes, street food, lesser-known spots ----
     local_results = _search_safe(
@@ -112,16 +93,23 @@ mentioned, write "check exact location on Google Maps" for location.
 Return ONLY a JSON list of objects, no markdown fences, exact shape:
 [{{"name": "Specific place name", "type": "e.g. cafe / street food / viewpoint",
 "location": "neighborhood or street name", "why": "vivid one-line reason it's worth seeking out"}}]"""
-        local_recommendations = _ask_llm_json(prompt, [])
+        local_recommendations = ask_llm_json(llm, prompt, fallback=[]) or []
 
     # ---- Budget category breakdown (for the pie chart) ----
     total = state.get("budget_breakdown", {}).get("total_estimated", 0)
     budget_categories = []
     if total:
+        # Only pass day numbers + costs here, not the full activities/meals
+        # text again — that was already used by the itinerary agent and just
+        # adds tokens without helping this categorization task.
+        lean_itinerary = [
+            {"day": d.get("day"), "cost_usd": d.get("estimated_cost_usd")}
+            for d in state.get("final_itinerary", [])
+        ]
         prompt = f"""A trip to {destination} has an estimated total cost of
 {total} {currency}, based on this context:
 
-Itinerary: {json.dumps(state.get('final_itinerary', []))}
+Daily cost breakdown: {json.dumps(lean_itinerary)}
 Hotel options considered: {json.dumps(hotels)}
 Transport options considered: {json.dumps(transport_options)}
 
@@ -130,7 +118,7 @@ Food & Dining, Local Transport, Activities & Sightseeing, Shopping & Misc.
 The amounts MUST sum to exactly {total}. Return ONLY a JSON list, no markdown
 fences, exact shape:
 [{{"category": "Accommodation", "amount": 1234.0}}, ...]"""
-        raw_categories = _ask_llm_json(prompt, [])
+        raw_categories = ask_llm_json(llm, prompt, fallback=[]) or []
         # normalize defensively — an LLM's numbers won't always sum exactly,
         # and a broken/empty response should never crash the whole pipeline.
         try:

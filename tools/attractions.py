@@ -9,17 +9,27 @@ load_dotenv()
 
 
 def get_attractions(lat: float, lon: float, radius: int = 5000, limit: int = 10) -> list:
-    """Fetch top attractions near a point, with descriptions."""
+    """Fetch top attractions near a point, with descriptions.
+
+    Escalates the search radius if the first attempt comes back empty or
+    very sparse — this matters for destinations that are spread over a wide
+    area (e.g. island chains like Andaman) where a tight 5km radius around
+    the geocoded centroid can miss everything.
+    """
     key = os.getenv("OPENTRIPMAP_API_KEY")
     if not key:
         raise EnvironmentError("OPENTRIPMAP_API_KEY missing from .env")
 
     url = "https://api.opentripmap.com/0.1/en/places/radius"
-    params = {"radius": radius, "lon": lon, "lat": lat, "limit": limit, "apikey": key}
 
-    r = requests.get(url, params=params, timeout=15)
-    r.raise_for_status()
-    places = r.json().get("features", [])
+    places = []
+    for try_radius in (radius, 20000, 60000):
+        params = {"radius": try_radius, "lon": lon, "lat": lat, "limit": limit, "apikey": key}
+        r = requests.get(url, params=params, timeout=15)
+        r.raise_for_status()
+        places = r.json().get("features", [])
+        if len(places) >= 3:
+            break  # good enough, stop escalating
 
     results = []
     for place in places[:limit]:
@@ -27,10 +37,14 @@ def get_attractions(lat: float, lon: float, radius: int = 5000, limit: int = 10)
         detail_url = f"https://api.opentripmap.com/0.1/en/places/xid/{xid}"
         detail = requests.get(detail_url, params={"apikey": key}, timeout=15).json()
 
+        name = detail.get("name", "").strip()
+        if not name:
+            continue  # skip unnamed points — not useful for an itinerary or map
+
         point = detail.get("point", {}) or {}
         results.append(
             {
-                "name": detail.get("name", "Unknown"),
+                "name": name,
                 "kinds": detail.get("kinds", ""),
                 "description": (detail.get("wikipedia_extracts", {}) or {}).get("text", "")[:300],
                 "rating": detail.get("rate", 0),

@@ -3,20 +3,11 @@
 Sums itinerary costs, converts to the user's currency, compares against
 budget, and asks the LLM for swap suggestions if over budget.
 """
-import os
 import json
-from langchain_groq import ChatGroq
-from dotenv import load_dotenv
-
 from tools.currency import get_exchange_rate
+from tools.llm_helpers import make_llm, ask_llm_json
 
-load_dotenv()
-
-llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0.1,
-)
+llm = make_llm(temperature=0.1)
 
 
 def budget_node(state: dict) -> dict:
@@ -52,12 +43,7 @@ Need to cut {diff} {currency}. Itinerary: {json.dumps(itinerary)}
 
 Suggest 3 specific cost-saving swaps. Return ONLY a JSON list of 3 strings,
 no markdown fences, no explanation."""
-        r = llm.invoke(prompt)
-        raw = r.content.strip().strip("`")
-        try:
-            suggestions = json.loads(raw)
-        except json.JSONDecodeError:
-            suggestions = [raw]
+        suggestions = ask_llm_json(llm, prompt, fallback=[]) or []
 
     return {
         **state,

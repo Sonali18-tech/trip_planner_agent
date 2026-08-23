@@ -6,20 +6,11 @@ fields the rest of the app already understands. This runs standalone (not
 part of the LangGraph pipeline) — it just pre-fills the form; the person
 still reviews/edits before actually planning.
 """
-import os
-import json
 import re
 from datetime import date
-from langchain_groq import ChatGroq
-from dotenv import load_dotenv
+from tools.llm_helpers import make_llm, ask_llm_json
 
-load_dotenv()
-
-llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0.1,
-)
+llm = make_llm(temperature=0.1)
 
 
 def parse_trip_idea(text: str) -> dict:
@@ -43,16 +34,7 @@ anything not mentioned or not confidently inferable):
   "interests": ["array of relevant tags from: museums, food, nature, nightlife, shopping, history — only ones actually implied"]
 }}"""
 
-    response = llm.invoke(prompt)
-    raw = response.content.strip()
-    if raw.startswith("```"):
-        raw = raw.strip("`")
-        raw = raw[4:] if raw.startswith("json") else raw
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        parsed = {}
+    parsed = ask_llm_json(llm, prompt, fallback={}) or {}
 
     # normalize budget if the model left it as a string like "30k" or "30,000"
     budget = parsed.get("budget")
